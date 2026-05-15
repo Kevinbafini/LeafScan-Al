@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeafScan AI | Análise de Doenças em Folhas</title>
+  <meta name="description" content="Plataforma para análise visual de doenças em folhas de limão.">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Página inicial do LeafScan AI">
+      <span class="brand-mark" aria-hidden="true">LS</span>
+      <span>LeafScan AI</span>
+    </a>
+    <nav class="top-nav dashboard-nav" aria-label="Navegação principal">
+      <a class="nav-link is-active" href="#top">Painel</a>
+      <a class="nav-link" href="#analysis">Nova Análise</a>
+      <a class="nav-link" href="#history">Histórico</a>
+      <a class="nav-link profile-link" href="#top">
+        <i class="fa-regular fa-circle-user" aria-hidden="true"></i>
+        <span>Perfil</span>
+      </a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-band" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <p class="eyebrow">Análise inteligente para citricultura</p>
+        <h1 id="hero-title">LeafScan AI</h1>
+        <p class="hero-copy">
+          Analise imagens de folhas de limão, identifique possíveis sinais de doenças e acompanhe recomendações
+          de manejo em uma experiência simples, visual e organizada.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#analysis">Iniciar análise</a>
+          <a class="button button-secondary" href="#diseases">Ver condições avaliadas</a>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-label="Prévia da análise de folha de limão">
+        <div class="leaf-frame">
+          <div class="leaf-shape">
+            <span class="leaf-vein"></span>
+            <span class="spot spot-one"></span>
+            <span class="spot spot-two"></span>
+            <span class="spot spot-three"></span>
+          </div>
+          <div class="scan-line" aria-hidden="true"></div>
+        </div>
+        <div class="visual-panel">
+          <span class="panel-label">Status da análise</span>
+          <strong id="modelStatusText">Preparando sistema</strong>
+          <small>Envie uma imagem nítida da folha para iniciar a avaliação.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="intro-section" aria-labelledby="about-title">
+      <div class="section-heading">
+        <p class="eyebrow">Visão geral</p>
+        <h2 id="about-title">Triagem visual para folhas de limão</h2>
+      </div>
+      <p>
+        O LeafScan AI permite enviar ou capturar uma imagem da folha, apresenta a condição mais provável
+        e organiza as análises em um histórico visual para consulta posterior.
+      </p>
+      <div class="notice academic-notice" role="note">
+        <strong>Aviso importante:</strong>
+        Esta ferramenta oferece apoio visual e educativo. A confirmação de doenças e decisões de manejo devem
+        considerar avaliação técnica especializada.
+      </div>
+    </section>
+
+    <section id="diseases" class="section-band soft-band" aria-labelledby="disease-title">
+      <div class="section-heading">
+        <p class="eyebrow">Condições avaliadas</p>
+        <h2 id="disease-title">Principais sinais observados em folhas cítricas</h2>
+      </div>
+      <div id="diseaseGrid" class="disease-grid" aria-live="polite"></div>
+    </section>
+
+    <section id="analysis" class="analysis-section detection-section" aria-labelledby="analysis-title">
+      <div class="analysis-inner">
+        <div class="detection-heading">
+          <h2 id="analysis-title">Detecte Doenças em Folhas de Limão com IA</h2>
+          <p>Carregue uma imagem e obtenha informações instantâneas: causas, tratamento e prevenção.</p>
+        </div>
+
+        <div id="configurationWarning" class="notice config-warning" role="status">
+          <strong>Sistema em preparação:</strong>
+          A análise automática ainda não está disponível. Tente novamente em instantes.
+        </div>
+
+        <div class="analysis-layout">
+          <div class="tool-panel upload-card">
+            <img src="images/img_planta.png" alt="" class="plant-decoration" aria-hidden="true">
+
+            <input id="imageInput" class="visually-hidden-input" type="file" accept="image/*">
+
+            <div id="dropZone" class="preview-box upload-dropzone" tabindex="0" role="button" aria-label="Carregar imagem de folha de limão">
+              <img id="imagePreview" alt="Prévia da folha selecionada" hidden>
+              <div id="emptyPreview" class="empty-state">
+                <span class="upload-cloud" aria-hidden="true">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                </span>
+                <p>Arraste e solte a imagem aqui</p>
+                <small>Clique na área para selecionar um arquivo</small>
+              </div>
+            </div>
+
+            <div class="upload-actions">
+              <button id="analyzeBtn" class="button button-primary" type="button">
+                <i class="fa-solid fa-microscope" aria-hidden="true"></i>
+                <span>Analisar Folha</span>
+              </button>
+              <button id="startCameraBtn" class="button button-secondary" type="button">
+                <i class="fa-solid fa-camera" aria-hidden="true"></i>
+                <span>Tirar Foto</span>
+              </button>
+            </div>
+
+            <div class="camera-controls camera-actions" aria-label="Controles da câmera">
+              <button id="captureBtn" class="button button-secondary" type="button" disabled>
+                <i class="fa-solid fa-image" aria-hidden="true"></i>
+                <span>Capturar</span>
+              </button>
+              <button id="stopCameraBtn" class="button button-ghost" type="button" disabled>
+                <i class="fa-solid fa-video-slash" aria-hidden="true"></i>
+                <span>Fechar Câmera</span>
+              </button>
+            </div>
+
+            <video id="cameraVideo" class="camera-video" autoplay playsinline muted hidden></video>
+            <canvas id="captureCanvas" hidden></canvas>
+
+            <div id="errorMessage" class="error-message" role="alert" hidden></div>
+          </div>
+
+          <section id="resultDashboard" class="result-dashboard" aria-labelledby="result-title" hidden>
+            <div class="dashboard-topbar">
+              <h2 id="result-title">Painel de Resultados do Diagnóstico</h2>
+              <div class="dashboard-actions">
+                <button id="downloadReportBtn" class="button button-secondary" type="button">
+                  <i class="fa-solid fa-download" aria-hidden="true"></i>
+                  <span>Baixar Relatório</span>
+                </button>
+                <button id="newAnalysisBtn" class="button button-primary" type="button">
+                  <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                  <span>Nova Análise</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="loadingState" class="loading-state" hidden>
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Analisando imagem...</span>
+            </div>
+
+            <div id="emptyResult" class="empty-result">
+              Carregue ou capture uma imagem para visualizar a condição prevista, a confiança e a recomendação.
+            </div>
+
+            <div id="resultContent" class="result-content diagnostic-grid" hidden>
+              <article class="analyzed-image-card diagnostic-card">
+                <h3 id="analyzedImageTitle">Folha Analisada</h3>
+                <img id="dashboardImagePreview" alt="Imagem da folha analisada">
+                <p id="analysisDateText" class="analysis-date">Analisado em: --</p>
+              </article>
+
+              <div class="diagnostic-details">
+                <section class="diagnosis-banner">
+                  <i class="fa-solid fa-leaf" aria-hidden="true"></i>
+                  <h3 id="diagnosisName">Nome da Doença: --</h3>
+                </section>
+
+                <section class="confidence-card diagnostic-card">
+                  <div class="confidence-card-header">
+                    <div>
+                      <p>Nível de Confiança:</p>
+                      <strong id="confidenceValue">0%</strong>
+                    </div>
+                    <span id="confidenceLevelText">Baixa Confiança</span>
+                  </div>
+                  <div class="progress-track" aria-label="Nível de confiança">
+                    <span id="confidenceBar" class="progress-bar"></span>
+                  </div>
+                  <span id="severityBadge" class="severity-badge">Gravidade</span>
+                  <p id="lowConfidenceWarning" class="low-confidence" hidden>
+                    A confiança está abaixo de 70%. Use uma imagem mais nítida e confirme a avaliação com um especialista.
+                  </p>
+                </section>
+
+                <section class="description-card diagnostic-card">
+                  <div class="diagnostic-card-title">
+                    <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+                    <h3>Descrição</h3>
+                  </div>
+                  <p id="resultDescription"></p>
+                </section>
+
+                <div class="guidance-grid">
+                  <section class="guidance-card diagnostic-card">
+                    <div class="diagnostic-card-title">
+                      <i class="fa-solid fa-cloud-rain" aria-hidden="true"></i>
+                      <h3>Causas</h3>
+                    </div>
+                    <ul id="causesList"></ul>
+                  </section>
+
+                  <section class="guidance-card diagnostic-card">
+                    <div class="diagnostic-card-title">
+                      <i class="fa-solid fa-spray-can-sparkles" aria-hidden="true"></i>
+                      <h3>Tratamento</h3>
+                    </div>
+                    <ul id="treatmentList"></ul>
+                  </section>
+
+                  <section class="guidance-card diagnostic-card">
+                    <div class="diagnostic-card-title">
+                      <i class="fa-solid fa-shield-heart" aria-hidden="true"></i>
+                      <h3>Prevenção</h3>
+                    </div>
+                    <ul id="preventionList"></ul>
+                  </section>
+                </div>
+
+                <details class="probability-card diagnostic-card">
+                  <summary>Probabilidades por Classe</summary>
+                  <div id="probabilityList" class="probability-list" aria-live="polite"></div>
+                </details>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section id="howItWorks" class="how-it-works" aria-labelledby="how-title">
+          <h2 id="how-title">Como Funciona</h2>
+          <div class="steps-grid">
+            <article class="step-card">
+              <span class="step-icon" aria-hidden="true">
+                <i class="fa-solid fa-camera-retro"></i>
+              </span>
+              <h3>Carregue</h3>
+              <p>Capture ou selecione uma imagem clara da folha</p>
+            </article>
+            <article class="step-card">
+              <span class="step-icon" aria-hidden="true">
+                <i class="fa-solid fa-brain"></i>
+              </span>
+              <h3>Analise</h3>
+              <p>Nossa IA analisa a imagem em busca de padrões de doenças</p>
+            </article>
+            <article class="step-card">
+              <span class="step-icon" aria-hidden="true">
+                <i class="fa-solid fa-file-medical"></i>
+              </span>
+              <h3>Previna</h3>
+              <p>Receba um relatório detalhado e sugestões de tratamento</p>
+            </article>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="history" class="history-section history-page" aria-labelledby="history-title">
+      <div class="history-panel">
+        <div class="history-heading">
+          <div class="section-heading">
+            <p class="eyebrow">Registros salvos</p>
+            <h2 id="history-title">Histórico de Análises</h2>
+            <p class="history-subtitle">Acompanhe todas as análises realizadas nas folhas.</p>
+          </div>
+
+          <div class="history-actions">
+            <label class="history-search" for="historySearchInput">
+              <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+              <input id="historySearchInput" type="search" placeholder="Pesquisar análises..." autocomplete="off">
+            </label>
+
+            <div class="filter-wrapper">
+              <button id="historyFilterBtn" class="button button-secondary filter-button" type="button" aria-expanded="false" aria-controls="historyFilterMenu">
+                <i class="fa-solid fa-filter" aria-hidden="true"></i>
+                <span>Filtrar</span>
+                <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+              </button>
+              <div id="historyFilterMenu" class="filter-menu" hidden>
+                <button type="button" data-filter="all">Todos</button>
+                <button type="button" data-filter="disease">Ordenar por doença</button>
+                <button type="button" data-filter="date">Mais recentes</button>
+                <button type="button" data-filter="high">Alta gravidade</button>
+                <button type="button" data-filter="medium">Média gravidade</button>
+                <button type="button" data-filter="low">Baixa gravidade</button>
+              </div>
+            </div>
+
+            <button id="clearHistoryBtn" class="button button-ghost clear-history-button" type="button">
+              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              <span>Limpar Histórico</span>
+            </button>
+          </div>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="reportModal" class="report-modal" role="dialog" aria-modal="true" aria-labelledby="reportModalTitle" hidden>
+    <div class="report-backdrop" data-modal-close></div>
+    <article id="reportModalContent" class="report-modal-content">
+      <button id="reportCloseBtn" class="report-close-button" type="button" aria-label="Fechar relatório">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+      <div id="reportModalBody"></div>
+    </article>
+  </div>
+
+  <footer class="site-footer">
+    <p>LeafScan AI ajuda a organizar análises visuais de folhas de limão com uma experiência simples e segura.</p>
+  </footer>
+
+  <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
