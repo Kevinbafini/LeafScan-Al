@@ -1,4 +1,7 @@
-const MODEL_URL = "https://teachablemachine.withgoogle.com/models/4E_rRHs43/";
+const SUPPORTED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const CONFIDENCE_MAP = { high: 0.92, medium: 0.68, low: 0.42 };
 
 const DISEASE_INFO = {
   "Healthy Leaf": {
@@ -200,11 +203,8 @@ const DISEASE_INFO = {
 };
 
 const HISTORY_KEY = "leafscan-ai-history";
-const PLACEHOLDER_URL = "PASTE_YOUR_TEACHABLE_MACHINE_MODEL_URL_HERE";
 const HISTORY_IMAGE_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 360'%3E%3Crect width='480' height='360' fill='%23edf6e9'/%3E%3Cpath d='M240 95c58 48 87 96 87 145 0 47-35 79-87 79s-87-32-87-79c0-49 29-97 87-145z' fill='%23287a45' opacity='.18'/%3E%3Cpath d='M240 132v150' stroke='%23287a45' stroke-width='12' stroke-linecap='round' opacity='.45'/%3E%3C/svg%3E";
 
-let model = null;
-let maxPredictions = 0;
 let selectedImageData = "";
 let selectedImageFileName = "";
 let cameraStream = null;
@@ -220,7 +220,8 @@ document.addEventListener("DOMContentLoaded", () => {
   renderHistory();
   bindEvents();
   updateModelStatus();
-  loadModel();
+  initMobileMenu();
+  initScrollAnimations();
 });
 
 function cacheElements() {
@@ -299,59 +300,27 @@ function bindEvents() {
   });
 }
 
-function isModelConfigured() {
-  return MODEL_URL && MODEL_URL !== PLACEHOLDER_URL && MODEL_URL.startsWith("http");
-}
-
-function getModelBaseUrl() {
-  return MODEL_URL.endsWith("/") ? MODEL_URL : `${MODEL_URL}/`;
-}
-
-function updateModelStatus(message, ready = false) {
-  const configured = isModelConfigured();
-  const status = message || (configured ? "Preparando análise" : "Análise indisponível");
-  elements.modelStatusText.textContent = status;
-
-  if (configured && ready) {
-    elements.configurationWarning.classList.add("is-ready");
-    elements.configurationWarning.innerHTML = "<strong>Sistema pronto:</strong> envie uma imagem da folha para iniciar a avaliação.";
-  } else if (configured) {
-    elements.configurationWarning.classList.remove("is-ready");
-    elements.configurationWarning.innerHTML = "<strong>Preparando análise:</strong> aguarde alguns instantes antes de enviar a imagem.";
-  } else {
-    elements.configurationWarning.classList.remove("is-ready");
-    elements.configurationWarning.innerHTML = "<strong>Análise temporariamente indisponível:</strong> tente novamente em instantes.";
-  }
-}
-
-async function loadModel() {
-  if (!isModelConfigured()) {
-    updateModelStatus("Análise indisponível");
-    return;
-  }
-
-  try {
-    const modelURL = `${getModelBaseUrl()}model.json`;
-    const metadataURL = `${getModelBaseUrl()}metadata.json`;
-    model = await tmImage.load(modelURL, metadataURL);
-    maxPredictions = model.getTotalClasses();
-    updateModelStatus("Sistema pronto para análise", true);
-  } catch (error) {
-    model = null;
-    showError("O sistema de análise não pôde ser iniciado. Tente novamente em instantes.");
-    updateModelStatus("Análise indisponível");
-    console.error(error);
-  }
+function updateModelStatus() {
+  elements.modelStatusText.innerHTML = '<span class="status-dot" aria-hidden="true"></span>Sistema pronto para análise';
+  elements.configurationWarning.classList.add("is-ready");
+  elements.configurationWarning.innerHTML = '<i class="fa-solid fa-circle-check" aria-hidden="true" style="color:var(--primary);margin-right:6px"></i><strong>Sistema pronto:</strong> envie uma imagem da folha para iniciar a avaliação com IA (Claude).';
 }
 
 function renderDiseaseCards() {
-  elements.diseaseGrid.innerHTML = Object.values(DISEASE_INFO).map((disease) => `
-    <article class="disease-card">
-      <span class="card-icon" aria-hidden="true"><i class="${disease.icon}"></i></span>
-      <h3>${disease.displayName}</h3>
-      <p>${disease.description}</p>
-    </article>
-  `).join("");
+  elements.diseaseGrid.innerHTML = Object.values(DISEASE_INFO).map((disease) => {
+    const severityClass = getSeverityClass(disease.severity);
+    const severityLabel = formatSeverity(disease.severity);
+    return `
+      <article class="disease-card">
+        <span class="card-icon" aria-hidden="true"><i class="${disease.icon}"></i></span>
+        <h3>${disease.displayName}</h3>
+        <p>${disease.description}</p>
+        <span class="disease-card-severity ${severityClass}">
+          <i class="fa-solid fa-circle-dot" aria-hidden="true" style="font-size:0.65rem;margin-right:4px"></i>Gravidade ${escapeHTML(severityLabel)}
+        </span>
+      </article>
+    `;
+  }).join("");
 }
 
 function handleFileSelection(event) {
@@ -389,6 +358,16 @@ function readImageFile(file) {
 
   if (!file.type.startsWith("image/")) {
     showError("Selecione um arquivo de imagem válido.");
+    return;
+  }
+
+  if (!SUPPORTED_MIME_TYPES.has(file.type)) {
+    showError("Formato não suportado. Use JPG, PNG ou WEBP.");
+    return;
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    showError("Imagem muito grande. O tamanho máximo permitido é 10 MB.");
     return;
   }
 
@@ -471,66 +450,72 @@ async function analyzeImage() {
     return;
   }
 
-  if (!isModelConfigured()) {
-    showError("O sistema de análise ainda não está disponível. Tente novamente em instantes.");
-    showConfigurationResult();
-    return;
-  }
-
-  if (!model) {
-    showError("A análise ainda está sendo preparada. Tente novamente em alguns instantes.");
-    return;
-  }
-
   setLoading(true);
 
   try {
-    const predictions = await model.predict(elements.imagePreview);
-    const sortedPredictions = predictions
-      .sort((a, b) => b.probability - a.probability)
-      .slice(0, maxPredictions || predictions.length);
-
-    if (!sortedPredictions.length) {
-      throw new Error("No predictions returned by the model.");
+    const dataUrlMatch = selectedImageData.match(/^data:([^;]+);base64,(.+)$/);
+    if (!dataUrlMatch) {
+      throw new Error("Formato de imagem inválido.");
     }
 
-    const topPrediction = sortedPredictions[0];
+    const mimeType = dataUrlMatch[1];
+    const imageBase64 = dataUrlMatch[2];
+
+    const response = await fetch("/api/analyze-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64, mimeType })
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`Resposta inesperada do servidor (status ${response.status}). Verifique se o servidor está rodando.`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      if (response.status === 401) {
+        throw new Error("Chave de API inválida. Verifique o arquivo .env e reinicie o servidor.");
+      }
+      if (response.status === 429) {
+        throw new Error("Limite de uso da API atingido. Aguarde alguns minutos e tente novamente.");
+      }
+      if (response.status === 400) {
+        throw new Error(result.error || "Imagem inválida ou tipo não suportado.");
+      }
+      throw new Error(result.error || "A análise retornou um erro desconhecido.");
+    }
+
+    const { analysis } = result;
     currentAnalysisDateTime = new Date().toISOString();
-    renderResult(topPrediction, sortedPredictions, currentAnalysisDateTime);
-    await saveAnalysis(topPrediction, sortedPredictions, currentAnalysisDateTime);
+    renderResult(analysis, currentAnalysisDateTime);
+    await saveAnalysis(analysis, currentAnalysisDateTime);
   } catch (error) {
-    showError("Não foi possível analisar esta imagem. Tente usar uma foto mais nítida da folha.");
+    const isNetworkError = error instanceof TypeError;
+    showError(
+      isNetworkError
+        ? "Não foi possível conectar ao servidor. Verifique se o servidor está rodando com 'npm run dev'."
+        : `Não foi possível analisar esta imagem: ${error.message}`
+    );
     console.error(error);
   } finally {
     setLoading(false);
   }
 }
 
-function showConfigurationResult() {
-  currentAnalysisDateTime = new Date().toISOString();
-  elements.resultDashboard.hidden = false;
-  elements.emptyResult.hidden = true;
-  elements.resultContent.hidden = false;
-  elements.dashboardImagePreview.src = selectedImageData || HISTORY_IMAGE_PLACEHOLDER;
-  elements.analyzedImageTitle.textContent = getAnalyzedImageTitle();
-  elements.analysisDateText.textContent = `Analisado em: ${formatAnalysisDateTime(currentAnalysisDateTime)}`;
-  elements.diagnosisName.textContent = "Nome da Doença: Análise indisponível";
-  elements.confidenceValue.textContent = "0%";
-  elements.confidenceLevelText.textContent = "Baixa Confiança";
-  elements.confidenceBar.style.width = "0%";
-  elements.severityBadge.textContent = "Indisponível";
-  elements.severityBadge.className = "severity-badge";
-  elements.resultDescription.textContent = "O recurso de análise automática não está disponível no momento.";
-  renderGuidanceList(elements.causesList, ["O sistema de análise automática não retornou um diagnóstico."]);
-  renderGuidanceList(elements.treatmentList, ["Tente novamente em instantes ou atualize a página antes de realizar uma nova análise."]);
-  renderGuidanceList(elements.preventionList, ["Use uma imagem nítida e mantenha o acompanhamento técnico da planta."]);
-  elements.lowConfidenceWarning.hidden = true;
-  elements.probabilityList.innerHTML = "";
+function getConfidenceFromAnalysis(analysis) {
+  if (typeof analysis.confidenceScore === "number" && analysis.confidenceScore > 0) {
+    return Math.min(90, Math.max(0, Math.round(analysis.confidenceScore)));
+  }
+  return probabilityToPercent(CONFIDENCE_MAP[analysis.confidenceLevel] ?? 0.50);
 }
 
-function renderResult(topPrediction, predictions, dateTime = new Date().toISOString()) {
-  const confidence = probabilityToPercent(topPrediction.probability);
-  const info = getDiseaseInfo(topPrediction.className);
+function renderResult(analysis, dateTime = new Date().toISOString()) {
+  const confidence = getConfidenceFromAnalysis(analysis);
+  const confidenceLabelMap = { high: "Alta", medium: "Média", low: "Baixa" };
+  const confidenceLabel = confidenceLabelMap[analysis.confidenceLevel] || "Média";
+  const diseaseName = analysis.diseaseName || analysis.classification || "—";
 
   elements.resultDashboard.hidden = false;
   elements.emptyResult.hidden = true;
@@ -538,21 +523,47 @@ function renderResult(topPrediction, predictions, dateTime = new Date().toISOStr
   elements.dashboardImagePreview.src = selectedImageData;
   elements.analyzedImageTitle.textContent = getAnalyzedImageTitle();
   elements.analysisDateText.textContent = `Analisado em: ${formatAnalysisDateTime(dateTime)}`;
-  elements.diagnosisName.textContent = `Nome da Doença: ${info.displayName}`;
+  elements.diagnosisName.textContent = `Diagnóstico: ${diseaseName}`;
   elements.confidenceValue.textContent = `${confidence}%`;
   elements.confidenceLevelText.textContent = getConfidenceLabel(confidence);
   elements.confidenceBar.style.width = "0%";
   window.requestAnimationFrame(() => {
     elements.confidenceBar.style.width = `${confidence}%`;
   });
-  elements.severityBadge.textContent = `Gravidade ${formatSeverity(info.severity)}`;
-  elements.severityBadge.className = `severity-badge ${getSeverityClass(info.severity)}`;
-  elements.resultDescription.textContent = info.description;
-  renderGuidanceList(elements.causesList, info.causes);
-  renderGuidanceList(elements.treatmentList, info.treatment);
-  renderGuidanceList(elements.preventionList, info.prevention);
+  elements.severityBadge.textContent = `Confiança ${confidenceLabel}`;
+  elements.severityBadge.className = `severity-badge ${getSeverityClass(confidenceLabel)}`;
+  elements.resultDescription.textContent = analysis.details || analysis.summary || "";
+  renderGuidanceList(elements.causesList, Array.isArray(analysis.visibleSigns) ? analysis.visibleSigns : []);
+  renderGuidanceList(elements.treatmentList, analysis.recommendation ? [analysis.recommendation] : []);
+  renderGuidanceList(elements.preventionList, analysis.disclaimer ? [analysis.disclaimer] : []);
   elements.lowConfidenceWarning.hidden = confidence >= 70;
-  renderProbabilities(predictions);
+
+  const alternatives = Array.isArray(analysis.alternativeDiagnoses) ? analysis.alternativeDiagnoses : [];
+  elements.probabilityList.innerHTML = `
+    <div class="probability-item">
+      <div class="probability-meta">
+        <span><strong>${escapeHTML(diseaseName)}</strong></span>
+        <span>${confidence}%</span>
+      </div>
+      <div class="probability-track">
+        <span class="probability-bar" style="width: ${confidence}%"></span>
+      </div>
+    </div>
+    ${alternatives.map((alt) => `
+      <div class="probability-item">
+        <div class="probability-meta">
+          <span>${escapeHTML(alt.name || "")}</span>
+          <span class="alt-label">Alternativa</span>
+        </div>
+        ${alt.reason ? `<p class="alt-reason">${escapeHTML(alt.reason)}</p>` : ""}
+      </div>
+    `).join("")}
+  `;
+
+  const fallbackBadge = document.getElementById("fallbackBadge");
+  if (fallbackBadge) {
+    fallbackBadge.hidden = !analysis.fallback;
+  }
 }
 
 function getAnalyzedImageTitle() {
@@ -649,36 +660,40 @@ function createImageThumbnail(dataUrl, maxWidth = 320, quality = 0.7) {
   });
 }
 
-async function saveAnalysis(prediction, predictions = [], dateTime = new Date().toISOString()) {
-  const info = getDiseaseInfo(prediction.className);
+async function saveAnalysis(analysis, dateTime = new Date().toISOString()) {
+  const displayName = analysis.diseaseName || analysis.title || analysis.classification || "Análise concluída";
+  const confidence = getConfidenceFromAnalysis(analysis);
+  const confidenceLabelMap = { high: "Alta", medium: "Média", low: "Baixa" };
+  const severityLabel = confidenceLabelMap[analysis.confidenceLevel] || "Média";
 
   try {
     const thumbnail = await createImageThumbnail(selectedImageData);
     const entry = {
-      id: window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()),
+      id: window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()),
       dateTime,
-      predictedClass: info.displayName,
-      diseaseDisplayName: info.displayName,
-      confidence: probabilityToPercent(prediction.probability),
+      predictedClass: displayName,
+      diseaseDisplayName: displayName,
+      confidence,
       image: thumbnail,
       originalFileName: selectedImageFileName,
-      description: info.description,
-      recommendation: info.recommendation,
-      severity: info.severity,
-      causes: info.causes,
-      treatment: info.treatment,
-      prevention: info.prevention,
-      probabilities: predictions.map((item) => ({
-        className: item.className,
-        displayName: getDiseaseInfo(item.className).displayName,
-        confidence: probabilityToPercent(item.probability)
-      }))
+      description: analysis.details || analysis.summary || "",
+      recommendation: analysis.recommendation || "",
+      severity: severityLabel,
+      causes: Array.isArray(analysis.visibleSigns) ? analysis.visibleSigns : [],
+      treatment: analysis.recommendation ? [analysis.recommendation] : [],
+      prevention: analysis.disclaimer ? [analysis.disclaimer] : [],
+      probabilities: [{
+        className: analysis.classification || displayName,
+        displayName,
+        confidence
+      }],
+      fallback: analysis.fallback || false
     };
 
     const history = [entry, ...getHistory()];
     persistHistory(history);
     renderHistory();
-    showToast("Análise concluída com sucesso.");
+    showToast(analysis.fallback ? "Análise demonstrativa concluída." : "Análise concluída com sucesso.");
   } catch (error) {
     showToast("A análise foi concluída, mas não foi possível salvar este registro no histórico.");
     console.warn(error);
@@ -832,15 +847,17 @@ function getNormalizedHistory() {
 }
 
 function normalizeHistoryEntry(entry, index) {
-  const predictedClass = entry.diseaseDisplayName || entry.predictedClass || "Classe não identificada";
-  const info = getDiseaseInfo(predictedClass);
+  const storedName = entry.diseaseDisplayName || entry.predictedClass || "Classe não identificada";
+  const info = getDiseaseInfo(storedName);
+  const isKnownDisease = info.displayName !== "Condição não identificada";
+  const displayName = isKnownDisease ? info.displayName : storedName;
   const dateTime = entry.dateTime || new Date().toISOString();
 
   return {
     id: entry.id || `legacy-${index}`,
     dateTime,
-    predictedClass: info.displayName,
-    diseaseDisplayName: entry.diseaseDisplayName || info.displayName,
+    predictedClass: displayName,
+    diseaseDisplayName: displayName,
     confidence: Number.isFinite(Number(entry.confidence)) ? Number(entry.confidence) : 0,
     image: entry.image || HISTORY_IMAGE_PLACEHOLDER,
     originalFileName: entry.originalFileName || "",
@@ -953,15 +970,15 @@ function openReportModal(entry) {
     </section>
     <div class="report-guidance-grid">
       <section class="report-section">
-        <h3><i class="fa-solid fa-cloud-rain" aria-hidden="true"></i> Causas</h3>
+        <h3><i class="fa-solid fa-eye" aria-hidden="true"></i> Sinais Visíveis</h3>
         ${renderReportList(entry.causes)}
       </section>
       <section class="report-section">
-        <h3><i class="fa-solid fa-spray-can-sparkles" aria-hidden="true"></i> Tratamento</h3>
+        <h3><i class="fa-solid fa-stethoscope" aria-hidden="true"></i> Recomendação</h3>
         ${renderReportList(entry.treatment)}
       </section>
       <section class="report-section">
-        <h3><i class="fa-solid fa-shield-heart" aria-hidden="true"></i> Prevenção</h3>
+        <h3><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Aviso</h3>
         ${renderReportList(entry.prevention)}
       </section>
     </div>
@@ -996,6 +1013,9 @@ function handleGlobalKeydown(event) {
       elements.historyFilterMenu.hidden = true;
       elements.historyFilterBtn.setAttribute("aria-expanded", "false");
     }
+    if (elements.mobileMenu && !elements.mobileMenu.hidden) {
+      closeMobileMenu();
+    }
   }
 }
 
@@ -1014,7 +1034,7 @@ function setActiveNavLink(activeLink) {
 function normalizeSearchText(value) {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim();
 }
@@ -1067,12 +1087,85 @@ function clearError() {
 }
 
 function showToast(message) {
-  elements.appToast.textContent = message;
-  elements.appToast.hidden = false;
+  const toast = elements.appToast;
+  toast.textContent = message;
+  toast.classList.remove("is-hiding", "is-visible");
+  toast.hidden = false;
+  void toast.offsetWidth;
+  toast.classList.add("is-visible");
+
   window.clearTimeout(showToast.timeoutId);
   showToast.timeoutId = window.setTimeout(() => {
-    elements.appToast.hidden = true;
-  }, 3200);
+    toast.classList.replace("is-visible", "is-hiding");
+    window.setTimeout(() => {
+      toast.hidden = true;
+      toast.classList.remove("is-hiding");
+    }, 240);
+  }, 3000);
 }
 
 window.addEventListener("beforeunload", stopCamera);
+
+/* ===== MOBILE MENU ===== */
+
+function initMobileMenu() {
+  elements.hamburgerBtn = document.getElementById("hamburgerBtn");
+  elements.mobileMenu = document.getElementById("mobileMenu");
+
+  if (!elements.hamburgerBtn || !elements.mobileMenu) return;
+
+  elements.hamburgerBtn.addEventListener("click", toggleMobileMenu);
+
+  elements.mobileMenu.querySelectorAll(".mobile-nav-link").forEach((link) => {
+    link.addEventListener("click", () => closeMobileMenu());
+  });
+}
+
+function toggleMobileMenu() {
+  if (elements.mobileMenu.hidden) {
+    openMobileMenu();
+  } else {
+    closeMobileMenu();
+  }
+}
+
+function openMobileMenu() {
+  elements.mobileMenu.hidden = false;
+  elements.hamburgerBtn.setAttribute("aria-expanded", "true");
+  document.body.style.overflow = "hidden";
+}
+
+function closeMobileMenu() {
+  elements.mobileMenu.hidden = true;
+  elements.hamburgerBtn.setAttribute("aria-expanded", "false");
+  document.body.style.overflow = "";
+}
+
+/* ===== SCROLL REVEAL ANIMATIONS ===== */
+
+function initScrollAnimations() {
+  if (typeof IntersectionObserver === "undefined") return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  const targets = [
+    document.querySelector(".intro-section"),
+    document.querySelector("#diseases .section-heading"),
+    document.querySelector("#diseases .disease-grid"),
+    document.querySelector(".how-it-works"),
+    document.querySelector(".history-panel")
+  ].filter(Boolean);
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("is-revealed");
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.06, rootMargin: "0px 0px -48px 0px" });
+
+  targets.forEach((el) => {
+    el.classList.add("section-reveal");
+    observer.observe(el);
+  });
+}

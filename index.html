@@ -1,30 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LeafScan AI | Análise de Doenças em Folhas</title>
   <meta name="description" content="Plataforma para análise visual de doenças em folhas de limão.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
 </head>
 <body>
+  <a class="skip-link" href="#top">Pular para o conteúdo principal</a>
+
   <header class="site-header">
     <a class="brand" href="#top" aria-label="Página inicial do LeafScan AI">
-      <span class="brand-mark" aria-hidden="true">LS</span>
+      <span class="brand-mark" aria-hidden="true"><i class="fa-solid fa-leaf"></i></span>
       <span>LeafScan AI</span>
     </a>
     <nav class="top-nav dashboard-nav" aria-label="Navegação principal">
       <a class="nav-link is-active" href="#top">Painel</a>
       <a class="nav-link" href="#analysis">Nova Análise</a>
       <a class="nav-link" href="#history">Histórico</a>
-      <a class="nav-link profile-link" href="#top">
-        <i class="fa-regular fa-circle-user" aria-hidden="true"></i>
-        <span>Perfil</span>
-      </a>
     </nav>
+    <button class="hamburger-btn" id="hamburgerBtn" type="button"
+            aria-label="Abrir menu de navegação" aria-expanded="false" aria-controls="mobileMenu">
+      <span class="hamburger-icon" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </span>
+    </button>
   </header>
 
   <main id="top">
@@ -37,25 +45,52 @@
           de manejo em uma experiência simples, visual e organizada.
         </p>
         <div class="hero-actions">
-          <a class="button button-primary" href="#analysis">Iniciar análise</a>
+          <a class="button button-primary" href="#analysis">
+            <i class="fa-solid fa-seedling" aria-hidden="true"></i>
+            Iniciar análise
+          </a>
           <a class="button button-secondary" href="#diseases">Ver condições avaliadas</a>
+        </div>
+
+        <div class="hero-stats" aria-label="Destaques da plataforma">
+          <div class="hero-stat">
+            <strong>9</strong>
+            <span>Condições detectadas</span>
+          </div>
+          <div class="hero-stat">
+            <strong>&lt;10s</strong>
+            <span>Tempo de análise</span>
+          </div>
+          <div class="hero-stat">
+            <i class="fa-solid fa-brain" aria-hidden="true"></i>
+            <span>Claude Vision AI</span>
+          </div>
         </div>
       </div>
 
       <div class="hero-visual" aria-label="Prévia da análise de folha de limão">
-        <div class="leaf-frame">
-          <div class="leaf-shape">
-            <span class="leaf-vein"></span>
-            <span class="spot spot-one"></span>
-            <span class="spot spot-two"></span>
-            <span class="spot spot-three"></span>
+        <div class="hero-img-frame" aria-hidden="true">
+          <img src="images/img_planta.png" alt="" class="hero-plant-img">
+          <div class="hero-scan-overlay">
+            <div class="scan-line"></div>
+            <div class="scan-corner sc-tl"></div>
+            <div class="scan-corner sc-tr"></div>
+            <div class="scan-corner sc-bl"></div>
+            <div class="scan-corner sc-br"></div>
           </div>
-          <div class="scan-line" aria-hidden="true"></div>
+          <div class="hero-ai-chip">
+            <span class="status-dot"></span>
+            <span>IA Ativa</span>
+          </div>
         </div>
         <div class="visual-panel">
-          <span class="panel-label">Status da análise</span>
-          <strong id="modelStatusText">Preparando sistema</strong>
-          <small>Envie uma imagem nítida da folha para iniciar a avaliação.</small>
+          <div class="visual-panel-inner">
+            <div>
+              <span class="panel-label">Status da análise</span>
+              <strong id="modelStatusText">Preparando sistema</strong>
+            </div>
+            <small>Envie uma imagem nítida da folha para iniciar a avaliação.</small>
+          </div>
         </div>
       </div>
     </section>
@@ -141,9 +176,27 @@
             <div id="errorMessage" class="error-message" role="alert" hidden></div>
           </div>
 
-          <section id="resultDashboard" class="result-dashboard" aria-labelledby="result-title" hidden>
+          <div class="result-column">
+            <div class="result-placeholder" aria-hidden="true">
+              <span class="result-placeholder-icon">
+                <i class="fa-solid fa-leaf"></i>
+              </span>
+              <h3>O diagnóstico aparecerá aqui</h3>
+              <p>Carregue uma imagem e clique em <strong>Analisar Folha</strong> para ver os resultados detalhados da análise com IA.</p>
+              <div class="result-placeholder-steps">
+                <span><i class="fa-solid fa-upload" aria-hidden="true"></i> Carregar</span>
+                <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                <span><i class="fa-solid fa-microscope" aria-hidden="true"></i> Analisar</span>
+                <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                <span><i class="fa-solid fa-file-medical" aria-hidden="true"></i> Resultado</span>
+              </div>
+            </div>
+            <section id="resultDashboard" class="result-dashboard" aria-labelledby="result-title" hidden>
             <div class="dashboard-topbar">
-              <h2 id="result-title">Painel de Resultados do Diagnóstico</h2>
+              <div class="result-title-row">
+                <h2 id="result-title">Painel de Resultados do Diagnóstico</h2>
+                <span id="fallbackBadge" class="fallback-badge" hidden>Resultado demonstrativo</span>
+              </div>
               <div class="dashboard-actions">
                 <button id="downloadReportBtn" class="button button-secondary" type="button">
                   <i class="fa-solid fa-download" aria-hidden="true"></i>
@@ -206,37 +259,38 @@
                 <div class="guidance-grid">
                   <section class="guidance-card diagnostic-card">
                     <div class="diagnostic-card-title">
-                      <i class="fa-solid fa-cloud-rain" aria-hidden="true"></i>
-                      <h3>Causas</h3>
+                      <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                      <h3>Sinais Visíveis</h3>
                     </div>
                     <ul id="causesList"></ul>
                   </section>
 
                   <section class="guidance-card diagnostic-card">
                     <div class="diagnostic-card-title">
-                      <i class="fa-solid fa-spray-can-sparkles" aria-hidden="true"></i>
-                      <h3>Tratamento</h3>
+                      <i class="fa-solid fa-stethoscope" aria-hidden="true"></i>
+                      <h3>Recomendação</h3>
                     </div>
                     <ul id="treatmentList"></ul>
                   </section>
 
                   <section class="guidance-card diagnostic-card">
                     <div class="diagnostic-card-title">
-                      <i class="fa-solid fa-shield-heart" aria-hidden="true"></i>
-                      <h3>Prevenção</h3>
+                      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                      <h3>Aviso</h3>
                     </div>
                     <ul id="preventionList"></ul>
                   </section>
                 </div>
 
                 <details class="probability-card diagnostic-card">
-                  <summary>Probabilidades por Classe</summary>
+                  <summary>Diagnóstico Principal e Alternativas</summary>
                   <div id="probabilityList" class="probability-list" aria-live="polite"></div>
                 </details>
               </div>
             </div>
           </section>
-        </div>
+          </div><!-- /.result-column -->
+        </div><!-- /.analysis-layout -->
 
         <section id="howItWorks" class="how-it-works" aria-labelledby="how-title">
           <h2 id="how-title">Como Funciona</h2>
@@ -320,10 +374,56 @@
   </div>
 
   <footer class="site-footer">
-    <p>LeafScan AI ajuda a organizar análises visuais de folhas de limão com uma experiência simples e segura.</p>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a class="brand footer-logo" href="#top" aria-label="Página inicial do LeafScan AI">
+          <span class="brand-mark" aria-hidden="true"><i class="fa-solid fa-leaf"></i></span>
+          <span>LeafScan AI</span>
+        </a>
+        <p class="footer-tagline">Análise visual inteligente de folhas de citros com inteligência artificial.</p>
+      </div>
+      <nav class="footer-nav-group" aria-label="Links de navegação do rodapé">
+        <h4>Navegação</h4>
+        <div class="footer-links">
+          <a href="#top"><i class="fa-solid fa-house" aria-hidden="true"></i> Painel</a>
+          <a href="#analysis"><i class="fa-solid fa-microscope" aria-hidden="true"></i> Nova Análise</a>
+          <a href="#diseases"><i class="fa-solid fa-leaf" aria-hidden="true"></i> Condições</a>
+          <a href="#history"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Histórico</a>
+        </div>
+      </nav>
+    </div>
+    <p class="footer-bottom">
+      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+      Esta ferramenta oferece apoio visual e educativo. A confirmação de doenças e decisões de manejo devem considerar avaliação técnica especializada.
+    </p>
   </footer>
 
   <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
+
+  <div id="mobileMenu" class="mobile-menu" hidden role="dialog" aria-label="Menu de navegação">
+    <nav class="mobile-nav">
+      <a class="mobile-nav-link" href="#top">
+        <i class="fa-solid fa-house" aria-hidden="true"></i>
+        <span>Painel</span>
+      </a>
+      <a class="mobile-nav-link" href="#analysis">
+        <i class="fa-solid fa-microscope" aria-hidden="true"></i>
+        <span>Nova Análise</span>
+      </a>
+      <a class="mobile-nav-link" href="#diseases">
+        <i class="fa-solid fa-leaf" aria-hidden="true"></i>
+        <span>Condições Avaliadas</span>
+      </a>
+      <a class="mobile-nav-link" href="#history">
+        <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+        <span>Histórico</span>
+      </a>
+      <a class="mobile-nav-link" href="#top">
+        <i class="fa-regular fa-circle-user" aria-hidden="true"></i>
+        <span>Perfil</span>
+      </a>
+    </nav>
+  </div>
 
   <script src="script.js"></script>
 </body>
