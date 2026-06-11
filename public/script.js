@@ -523,7 +523,7 @@ async function analyzeImage() {
     const isNetworkError = error instanceof TypeError;
     showError(
       isNetworkError
-        ? "Não foi possível conectar ao servidor. Verifique se o servidor está rodando com 'npm run dev'."
+        ? "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente."
         : `Não foi possível analisar esta imagem: ${error.message}`
     );
     console.error(error);

@@ -1,3 +1,9 @@
+CREATE DATABASE IF NOT EXISTS leafscan
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+USE leafscan;
+
 -- LeafScan AI — MySQL Schema
 -- Run once to initialize the database and all tables.
 -- Usage: mysql -u <user> -p < db/schema.sql
@@ -6,12 +12,6 @@
 -- Run this after applying the full schema:
 --   ALTER TABLE analyses ADD COLUMN IF NOT EXISTS user_id VARCHAR(36) AFTER id;
 --   ALTER TABLE analyses ADD INDEX IF NOT EXISTS idx_user_id (user_id);
-
-CREATE DATABASE IF NOT EXISTS leafscan
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-USE leafscan;
 
 -- ─── Users ────────────────────────────────────────────────────────────────────
 

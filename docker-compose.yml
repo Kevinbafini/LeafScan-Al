@@ -1,0 +1,52 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: leafscan-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: America/Sao_Paulo
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    networks:
+      - leafscan-net
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: leafscan-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: leafscan-mysql
+      DB_PORT: 3306
+      COOKIE_SECURE: "false"
+      TRUST_PROXY: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "80:3000"
+    networks:
+      - leafscan-net
+
+volumes:
+  mysql_data:
+
+networks:
+  leafscan-net:
+    driver: bridge

@@ -8,7 +8,30 @@ const { router: authRouter, requireAuth } = require("./routes/auth");
 require("dotenv").config();
 
 const app = express();
+
+// TRUST_PROXY=false for this deploy: the Node container is reached directly through Docker
+// port mapping (host:80 -> container:3000) with no reverse proxy in between.
+// Set to true only if Nginx, Cloudflare, Traefik, or a load balancer is placed in front.
+if (process.env.TRUST_PROXY === "true") {
+  app.set("trust proxy", 1);
+}
+
 const PORT = process.env.PORT || 3000;
+
+// In production the SESSION_SECRET must be explicitly set — refuse to start otherwise.
+const isProduction = process.env.NODE_ENV === "production";
+if (isProduction && !process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is required in production. Set it in your .env file.");
+}
+const sessionSecret = process.env.SESSION_SECRET || "leafscan-dev-only-secret";
+
+// Allow COOKIE_SECURE to be forced on/off via env so HTTP-only VPS deploys work correctly.
+const cookieSecure =
+  process.env.COOKIE_SECURE === "true"
+    ? true
+    : process.env.COOKIE_SECURE === "false"
+      ? false
+      : isProduction;
 const ANTHROPIC_MODEL = (process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest").trim();
 const DEMO_FALLBACK_ENABLED = process.env.DEMO_FALLBACK_ENABLED === "true";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -302,13 +325,13 @@ if (isDbConfigured()) {
   app.use(
     session({
       key: "leafscan.sid",
-      secret: process.env.SESSION_SECRET || "leafscan-dev-secret-CHANGE-IN-PRODUCTION",
+      secret: sessionSecret,
       store: sessionStore,
       resave: false,
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: cookieSecure,
         sameSite: "strict",
         maxAge: 7 * 24 * 60 * 60 * 1000
       }
@@ -319,15 +342,15 @@ if (isDbConfigured()) {
   app.use(
     session({
       key: "leafscan.sid",
-      secret: process.env.SESSION_SECRET || "leafscan-dev-secret-CHANGE-IN-PRODUCTION",
+      secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
-      cookie: { httpOnly: true, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 }
+      cookie: { httpOnly: true, secure: cookieSecure, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 }
     })
   );
 }
 
-app.use(express.static(path.join(__dirname)));
+app.use(express.static(path.join(__dirname, "public")));
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
