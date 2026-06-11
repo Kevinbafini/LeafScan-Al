@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -25,14 +25,28 @@
       <a class="nav-link" href="#analysis">Nova Análise</a>
       <a class="nav-link" href="#history">Histórico</a>
     </nav>
-    <button class="hamburger-btn" id="hamburgerBtn" type="button"
-            aria-label="Abrir menu de navegação" aria-expanded="false" aria-controls="mobileMenu">
-      <span class="hamburger-icon" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-      </span>
-    </button>
+    <div class="header-actions">
+      <button id="themeToggleBtn" class="theme-btn" type="button" aria-label="Alternar tema claro/escuro">
+        <i class="fa-solid fa-moon icon-moon" aria-hidden="true"></i>
+        <i class="fa-solid fa-sun icon-sun" aria-hidden="true"></i>
+      </button>
+      <div id="userSection" class="user-section" hidden>
+        <span id="userAvatar" class="user-avatar" aria-hidden="true"></span>
+        <span id="userDisplayName" class="user-display-name"></span>
+        <button id="logoutBtn" class="button button-ghost user-logout-btn" type="button" aria-label="Sair da conta">
+          <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+          <span>Sair</span>
+        </button>
+      </div>
+      <button class="hamburger-btn" id="hamburgerBtn" type="button"
+              aria-label="Abrir menu de navegação" aria-expanded="false" aria-controls="mobileMenu">
+        <span class="hamburger-icon" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+      </button>
+    </div>
   </header>
 
   <main id="top">
@@ -418,12 +432,218 @@
         <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
         <span>Histórico</span>
       </a>
-      <a class="mobile-nav-link" href="#top">
-        <i class="fa-regular fa-circle-user" aria-hidden="true"></i>
-        <span>Perfil</span>
-      </a>
+      <button id="mobileLogoutBtn" class="mobile-nav-link mobile-logout-btn" type="button" hidden>
+        <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+        <span>Sair</span>
+      </button>
     </nav>
   </div>
+
+  <!-- ─── Auth Overlay ───────────────────────────────────────────────────────── -->
+  <div id="authOverlay" class="auth-overlay" role="dialog" aria-modal="true" aria-label="Autenticação LeafScan AI">
+
+    <!-- Loading state shown while /auth/me is in flight -->
+    <div id="authLoadingState" class="auth-loading-state" aria-live="polite">
+      <span class="auth-spinner" aria-hidden="true"></span>
+      <span>Verificando sessão...</span>
+    </div>
+
+    <div id="authCard" class="auth-card" hidden>
+      <div class="auth-brand-bar">
+        <span class="brand-mark auth-brand-mark" aria-hidden="true"><i class="fa-solid fa-leaf"></i></span>
+        <span class="auth-brand-name">LeafScan AI</span>
+      </div>
+
+      <!-- ── Login View ──────────────────────────────────────────────────────── -->
+      <section id="authViewLogin" class="auth-view" aria-labelledby="authLoginTitle">
+        <div class="auth-view-header">
+          <h2 class="auth-title" id="authLoginTitle">Entrar</h2>
+          <p class="auth-subtitle">Acesse sua conta para continuar</p>
+        </div>
+        <form id="loginForm" class="auth-form" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="loginEmail">E-mail</label>
+            <input class="form-input" id="loginEmail" type="email" autocomplete="email"
+                   placeholder="seu@email.com" required>
+            <span class="form-field-error" id="loginEmailError" role="alert"></span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="loginPassword">Senha</label>
+            <div class="form-input-wrapper">
+              <input class="form-input" id="loginPassword" type="password"
+                     autocomplete="current-password" placeholder="Sua senha" required>
+              <button type="button" class="input-toggle-btn" data-toggle-password="loginPassword"
+                      aria-label="Mostrar ou ocultar senha">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <span class="form-field-error" id="loginPasswordError" role="alert"></span>
+          </div>
+          <div class="form-banner form-banner-error" id="loginFormError" role="alert" hidden></div>
+          <button type="submit" id="loginSubmitBtn" class="button button-primary button-wide">
+            <span class="btn-label">Entrar</span>
+            <span class="btn-spinner" aria-hidden="true" hidden>
+              <i class="fa-solid fa-spinner fa-spin"></i> Entrando...
+            </span>
+          </button>
+        </form>
+        <div class="auth-footer-links">
+          <button type="button" class="auth-text-link" data-goto-auth="forgot">Esqueceu a senha?</button>
+          <span class="auth-link-sep" aria-hidden="true">·</span>
+          <button type="button" class="auth-text-link" data-goto-auth="register">Criar conta</button>
+        </div>
+      </section>
+
+      <!-- ── Register View ───────────────────────────────────────────────────── -->
+      <section id="authViewRegister" class="auth-view" aria-labelledby="authRegisterTitle" hidden>
+        <div class="auth-view-header">
+          <h2 class="auth-title" id="authRegisterTitle">Criar conta</h2>
+          <p class="auth-subtitle">Crie sua conta gratuita para começar</p>
+        </div>
+        <form id="registerForm" class="auth-form" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="registerName">Nome completo</label>
+            <input class="form-input" id="registerName" type="text" autocomplete="name"
+                   placeholder="Seu nome" required>
+            <span class="form-field-error" id="registerNameError" role="alert"></span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="registerEmail">E-mail</label>
+            <input class="form-input" id="registerEmail" type="email" autocomplete="email"
+                   placeholder="seu@email.com" required>
+            <span class="form-field-error" id="registerEmailError" role="alert"></span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="registerPassword">Senha</label>
+            <div class="form-input-wrapper">
+              <input class="form-input" id="registerPassword" type="password"
+                     autocomplete="new-password" placeholder="Mínimo 8 caracteres" required>
+              <button type="button" class="input-toggle-btn" data-toggle-password="registerPassword"
+                      aria-label="Mostrar ou ocultar senha">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div class="password-strength" id="passwordStrengthMeter" aria-live="polite" hidden>
+              <div class="strength-bar-track">
+                <span class="strength-segment" data-level="1"></span>
+                <span class="strength-segment" data-level="2"></span>
+                <span class="strength-segment" data-level="3"></span>
+                <span class="strength-segment" data-level="4"></span>
+              </div>
+              <span class="strength-label" id="strengthLabel"></span>
+            </div>
+            <span class="form-field-error" id="registerPasswordError" role="alert"></span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="registerConfirm">Confirmar senha</label>
+            <div class="form-input-wrapper">
+              <input class="form-input" id="registerConfirm" type="password"
+                     autocomplete="new-password" placeholder="Repita a senha" required>
+              <button type="button" class="input-toggle-btn" data-toggle-password="registerConfirm"
+                      aria-label="Mostrar ou ocultar senha">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <span class="form-field-error" id="registerConfirmError" role="alert"></span>
+          </div>
+          <div class="form-banner form-banner-error" id="registerFormError" role="alert" hidden></div>
+          <button type="submit" id="registerSubmitBtn" class="button button-primary button-wide">
+            <span class="btn-label">Criar conta</span>
+            <span class="btn-spinner" aria-hidden="true" hidden>
+              <i class="fa-solid fa-spinner fa-spin"></i> Criando conta...
+            </span>
+          </button>
+        </form>
+        <div class="auth-footer-links">
+          <span>Já tem uma conta?</span>
+          <button type="button" class="auth-text-link" data-goto-auth="login">Entrar</button>
+        </div>
+      </section>
+
+      <!-- ── Forgot Password View ────────────────────────────────────────────── -->
+      <section id="authViewForgot" class="auth-view" aria-labelledby="authForgotTitle" hidden>
+        <div class="auth-view-header">
+          <h2 class="auth-title" id="authForgotTitle">Recuperar senha</h2>
+          <p class="auth-subtitle">Informe seu e-mail e enviaremos um link de recuperação</p>
+        </div>
+        <form id="forgotForm" class="auth-form" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="forgotEmail">E-mail</label>
+            <input class="form-input" id="forgotEmail" type="email" autocomplete="email"
+                   placeholder="seu@email.com" required>
+            <span class="form-field-error" id="forgotEmailError" role="alert"></span>
+          </div>
+          <div class="form-banner form-banner-success" id="forgotFormSuccess" role="status" hidden></div>
+          <div class="form-banner form-banner-error" id="forgotFormError" role="alert" hidden></div>
+          <button type="submit" id="forgotSubmitBtn" class="button button-primary button-wide">
+            <span class="btn-label">Enviar link de recuperação</span>
+            <span class="btn-spinner" aria-hidden="true" hidden>
+              <i class="fa-solid fa-spinner fa-spin"></i> Enviando...
+            </span>
+          </button>
+        </form>
+        <div class="auth-footer-links">
+          <button type="button" class="auth-text-link" data-goto-auth="login">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar para o login
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Reset Password View ─────────────────────────────────────────────── -->
+      <section id="authViewReset" class="auth-view" aria-labelledby="authResetTitle" hidden>
+        <div class="auth-view-header">
+          <h2 class="auth-title" id="authResetTitle">Redefinir senha</h2>
+          <p class="auth-subtitle">Crie uma nova senha para a sua conta</p>
+        </div>
+        <form id="resetForm" class="auth-form" novalidate>
+          <input type="hidden" id="resetTokenInput">
+          <div class="form-group">
+            <label class="form-label" for="resetPassword">Nova senha</label>
+            <div class="form-input-wrapper">
+              <input class="form-input" id="resetPassword" type="password"
+                     autocomplete="new-password" placeholder="Mínimo 8 caracteres" required>
+              <button type="button" class="input-toggle-btn" data-toggle-password="resetPassword"
+                      aria-label="Mostrar ou ocultar senha">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <span class="form-field-error" id="resetPasswordError" role="alert"></span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="resetConfirm">Confirmar nova senha</label>
+            <div class="form-input-wrapper">
+              <input class="form-input" id="resetConfirm" type="password"
+                     autocomplete="new-password" placeholder="Repita a nova senha" required>
+              <button type="button" class="input-toggle-btn" data-toggle-password="resetConfirm"
+                      aria-label="Mostrar ou ocultar senha">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <span class="form-field-error" id="resetConfirmError" role="alert"></span>
+          </div>
+          <div class="form-banner form-banner-success" id="resetFormSuccess" role="status" hidden></div>
+          <div class="form-banner form-banner-error" id="resetFormError" role="alert" hidden></div>
+          <button type="submit" id="resetSubmitBtn" class="button button-primary button-wide">
+            <span class="btn-label">Redefinir senha</span>
+            <span class="btn-spinner" aria-hidden="true" hidden>
+              <i class="fa-solid fa-spinner fa-spin"></i> Redefinindo...
+            </span>
+          </button>
+        </form>
+        <div class="auth-footer-links" id="resetBackLinks">
+          <button type="button" class="auth-text-link" data-goto-auth="forgot">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar
+          </button>
+        </div>
+        <div class="auth-footer-links" id="resetSuccessLinks" hidden>
+          <button type="button" class="auth-text-link" data-goto-auth="login">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Ir para o login
+          </button>
+        </div>
+      </section>
+
+    </div><!-- /.auth-card -->
+  </div><!-- /#authOverlay -->
 
   <script src="script.js"></script>
 </body>

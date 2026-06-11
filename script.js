@@ -211,20 +211,48 @@ let cameraStream = null;
 let activeHistoryFilter = "all";
 let renderedHistory = [];
 let currentAnalysisDateTime = "";
+let historyCache = [];
 
 const elements = {};
 
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   cacheElements();
   renderDiseaseCards();
-  renderHistory();
+  setHistoryLoading(true);
   bindEvents();
+  bindAuthEvents();
   updateModelStatus();
   initMobileMenu();
   initScrollAnimations();
+  initAuth();
 });
 
 function cacheElements() {
+  // Auth elements
+  elements.authOverlay         = document.getElementById("authOverlay");
+  elements.authCard            = document.getElementById("authCard");
+  elements.authLoadingState    = document.getElementById("authLoadingState");
+  elements.authViewLogin       = document.getElementById("authViewLogin");
+  elements.authViewRegister    = document.getElementById("authViewRegister");
+  elements.authViewForgot      = document.getElementById("authViewForgot");
+  elements.authViewReset       = document.getElementById("authViewReset");
+  elements.loginForm           = document.getElementById("loginForm");
+  elements.registerForm        = document.getElementById("registerForm");
+  elements.forgotForm          = document.getElementById("forgotForm");
+  elements.resetForm           = document.getElementById("resetForm");
+  elements.userSection         = document.getElementById("userSection");
+  elements.userAvatar          = document.getElementById("userAvatar");
+  elements.userDisplayName     = document.getElementById("userDisplayName");
+  elements.logoutBtn           = document.getElementById("logoutBtn");
+  elements.mobileLogoutBtn     = document.getElementById("mobileLogoutBtn");
+  elements.resetTokenInput     = document.getElementById("resetTokenInput");
+  elements.passwordStrengthMeter = document.getElementById("passwordStrengthMeter");
+  elements.strengthLabel       = document.getElementById("strengthLabel");
+  elements.resetBackLinks      = document.getElementById("resetBackLinks");
+  elements.resetSuccessLinks   = document.getElementById("resetSuccessLinks");
+
+  // App elements
   elements.modelStatusText = document.getElementById("modelStatusText");
   elements.configurationWarning = document.getElementById("configurationWarning");
   elements.diseaseGrid = document.getElementById("diseaseGrid");
@@ -690,44 +718,95 @@ async function saveAnalysis(analysis, dateTime = new Date().toISOString()) {
       fallback: analysis.fallback || false
     };
 
-    const history = [entry, ...getHistory()];
-    persistHistory(history);
-    renderHistory();
-    showToast(analysis.fallback ? "Análise demonstrativa concluída." : "Análise concluída com sucesso.");
+    const response = await fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      historyCache = [data.entry || entry, ...historyCache];
+      renderHistory();
+      showToast(analysis.fallback ? "Análise demonstrativa concluída." : "Análise concluída com sucesso.");
+    } else {
+      showToast("A análise foi concluída, mas não foi possível salvar este registro no histórico.");
+    }
   } catch (error) {
     showToast("A análise foi concluída, mas não foi possível salvar este registro no histórico.");
     console.warn(error);
   }
 }
 
-function persistHistory(history) {
-  for (let itemLimit = 8; itemLimit >= 1; itemLimit -= 1) {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, itemLimit)));
-      return;
-    } catch (error) {
-      if (!isStorageQuotaError(error) || itemLimit === 1) {
-        throw error;
-      }
-    }
-  }
-}
-
-function isStorageQuotaError(error) {
-  return error && (
-    error.name === "QuotaExceededError" ||
-    error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
-    error.code === 22 ||
-    error.code === 1014
-  );
-}
-
 function getHistory() {
+  return historyCache;
+}
+
+async function loadHistory() {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
-  } catch {
-    return [];
+    const response = await fetch("/api/history");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    historyCache = Array.isArray(data.history) ? data.history : [];
+  } catch (error) {
+    console.warn("[LeafScan] Não foi possível carregar o histórico:", error.message);
+    historyCache = [];
+    renderHistoryError();
+    return;
   }
+  renderHistory();
+}
+
+async function migrateLocalStorage() {
+  const raw = localStorage.getItem(HISTORY_KEY);
+  if (!raw) return;
+
+  let entries;
+  try {
+    entries = JSON.parse(raw);
+    if (!Array.isArray(entries) || entries.length === 0) {
+      localStorage.removeItem(HISTORY_KEY);
+      return;
+    }
+  } catch {
+    localStorage.removeItem(HISTORY_KEY);
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/history/migrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries })
+    });
+    if (response.ok) {
+      localStorage.removeItem(HISTORY_KEY);
+    }
+  } catch (error) {
+    console.warn("[LeafScan] Migração do localStorage falhou:", error.message);
+  }
+}
+
+function setHistoryLoading(isLoading) {
+  if (!isLoading) return;
+  elements.historyList.innerHTML = `
+    <div class="history-empty-state">
+      <span class="empty-history-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+      <p>Carregando histórico...</p>
+    </div>
+  `;
+  elements.clearHistoryBtn.disabled = true;
+}
+
+function renderHistoryError() {
+  elements.historyList.innerHTML = `
+    <div class="history-empty-state">
+      <span class="empty-history-icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+      <h3>Não foi possível carregar o histórico</h3>
+      <p>Verifique a conexão com o banco de dados e recarregue a página.</p>
+    </div>
+  `;
+  elements.clearHistoryBtn.disabled = true;
 }
 
 function renderHistory() {
@@ -765,6 +844,9 @@ function renderHistory() {
 
   elements.historyList.innerHTML = filteredHistory.map((entry, index) => `
     <article class="history-card">
+      <button class="card-delete-btn" type="button" data-delete-index="${index}" aria-label="Excluir análise">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
       <img src="${escapeAttribute(entry.image)}" alt="Prévia da análise para ${escapeAttribute(entry.predictedClass)}">
       <div class="history-body">
         <p class="history-date">${escapeHTML(entry.shortDate)}</p>
@@ -782,14 +864,21 @@ function renderHistory() {
   `).join("");
 }
 
-function clearHistory() {
+async function clearHistory() {
   const confirmed = window.confirm("Tem certeza que deseja apagar todo o histórico de análises?");
   if (!confirmed) return;
 
-  localStorage.removeItem(HISTORY_KEY);
-  renderedHistory = [];
-  renderHistory();
-  showToast("O histórico foi apagado.");
+  try {
+    const response = await fetch("/api/history", { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    historyCache = [];
+    renderedHistory = [];
+    renderHistory();
+    showToast("O histórico foi apagado.");
+  } catch (error) {
+    showToast("Não foi possível apagar o histórico.");
+    console.error(error);
+  }
 }
 
 function downloadReport() {
@@ -855,6 +944,7 @@ function normalizeHistoryEntry(entry, index) {
 
   return {
     id: entry.id || `legacy-${index}`,
+    _originalIndex: index,
     dateTime,
     predictedClass: displayName,
     diseaseDisplayName: displayName,
@@ -927,12 +1017,35 @@ function handleHistoryFilterSelection(event) {
 }
 
 function handleHistoryCardClick(event) {
+  const deleteBtn = event.target.closest("[data-delete-index]");
+  if (deleteBtn) {
+    const entry = renderedHistory[Number(deleteBtn.dataset.deleteIndex)];
+    if (entry) deleteHistoryEntry(entry);
+    return;
+  }
+
   const button = event.target.closest("[data-history-index]");
   if (!button) return;
 
   const entry = renderedHistory[Number(button.dataset.historyIndex)];
   if (entry) {
     openReportModal(entry);
+  }
+}
+
+async function deleteHistoryEntry(entry) {
+  const confirmed = window.confirm("Excluir esta análise do histórico?");
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch(`/api/history/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    historyCache = historyCache.filter((e) => e.id !== entry.id);
+    renderHistory();
+    showToast("Análise excluída do histórico.");
+  } catch (error) {
+    showToast("Não foi possível excluir esta análise.");
+    console.error(error);
   }
 }
 
@@ -1106,6 +1219,41 @@ function showToast(message) {
 
 window.addEventListener("beforeunload", stopCamera);
 
+/* ===== THEME MANAGEMENT ===== */
+
+const THEME_KEY = "leafscan-theme";
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const theme = saved || (prefersDark ? "dark" : "light");
+  applyTheme(theme);
+
+  const btn = document.getElementById("themeToggleBtn");
+  if (btn) btn.addEventListener("click", toggleTheme);
+
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+    if (!localStorage.getItem(THEME_KEY)) {
+      applyTheme(e.matches ? "dark" : "light");
+    }
+  });
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const btn = document.getElementById("themeToggleBtn");
+  if (btn) {
+    btn.setAttribute("aria-label", theme === "dark" ? "Alternar para tema claro" : "Alternar para tema escuro");
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  const next = current === "dark" ? "light" : "dark";
+  applyTheme(next);
+  localStorage.setItem(THEME_KEY, next);
+}
+
 /* ===== MOBILE MENU ===== */
 
 function initMobileMenu() {
@@ -1168,4 +1316,439 @@ function initScrollAnimations() {
     el.classList.add("section-reveal");
     observer.observe(el);
   });
+}
+
+/* ===== AUTH ===== */
+
+let currentUser = null;
+
+async function initAuth() {
+  // If URL contains ?action=reset&token=..., go straight to reset view
+  const params = new URLSearchParams(window.location.search);
+  const action = params.get("action");
+  const resetToken = params.get("token");
+
+  if (action === "reset" && resetToken) {
+    showAuthCard("reset");
+    elements.resetTokenInput.value = resetToken;
+    // Clean token from URL without reloading
+    history.replaceState(null, "", window.location.pathname);
+    return;
+  }
+
+  // Check existing session
+  try {
+    const res = await fetch("/auth/me");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.user) {
+        setAuthenticatedState(data.user);
+        return;
+      }
+    }
+  } catch {
+    // Network error — fall through to login screen
+  }
+
+  showAuthCard("login");
+}
+
+function setAuthenticatedState(user) {
+  currentUser = user;
+
+  // Update header user section
+  if (elements.userAvatar) {
+    elements.userAvatar.textContent = user.name.charAt(0).toUpperCase();
+  }
+  if (elements.userDisplayName) {
+    elements.userDisplayName.textContent = user.name;
+  }
+  if (elements.userSection) elements.userSection.hidden = false;
+  if (elements.mobileLogoutBtn) elements.mobileLogoutBtn.hidden = false;
+
+  // Hide overlay, show app
+  if (elements.authOverlay) elements.authOverlay.hidden = true;
+  document.body.classList.remove("not-authenticated");
+  document.body.classList.add("authenticated");
+
+  // Load history and run localStorage migration after auth is confirmed
+  migrateLocalStorage().then(() => loadHistory()).catch(() => loadHistory());
+}
+
+function showAuthCard(view) {
+  if (elements.authLoadingState) elements.authLoadingState.hidden = true;
+  if (elements.authCard) elements.authCard.hidden = false;
+  if (elements.authOverlay) elements.authOverlay.hidden = false;
+  document.body.classList.add("not-authenticated");
+  document.body.classList.remove("authenticated");
+  switchAuthView(view);
+}
+
+function switchAuthView(view) {
+  const viewMap = {
+    login:    elements.authViewLogin,
+    register: elements.authViewRegister,
+    forgot:   elements.authViewForgot,
+    reset:    elements.authViewReset
+  };
+
+  Object.entries(viewMap).forEach(([name, el]) => {
+    if (el) el.hidden = (name !== view);
+  });
+
+  // Focus first input in the active view for accessibility
+  const active = viewMap[view];
+  if (active) {
+    const firstInput = active.querySelector("input:not([type=hidden])");
+    if (firstInput) requestAnimationFrame(() => firstInput.focus());
+  }
+}
+
+// ─── Auth view navigation ─────────────────────────────────────────────────────
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-goto-auth]");
+  if (!btn) return;
+  clearAllAuthBanners();
+  switchAuthView(btn.dataset.gotoAuth);
+});
+
+// ─── Password show/hide toggle ────────────────────────────────────────────────
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-toggle-password]");
+  if (!btn) return;
+  const input = document.getElementById(btn.dataset.togglePassword);
+  if (!input) return;
+  const isShowing = input.type === "text";
+  input.type = isShowing ? "password" : "text";
+  const icon = btn.querySelector("i");
+  if (icon) {
+    icon.className = isShowing ? "fa-solid fa-eye" : "fa-solid fa-eye-slash";
+  }
+  btn.setAttribute("aria-label", isShowing ? "Mostrar senha" : "Ocultar senha");
+});
+
+// ─── Auth event bindings (called from DOMContentLoaded after cacheElements) ───
+
+function bindAuthEvents() {
+
+// ─── Password strength meter ──────────────────────────────────────────────────
+
+const registerPasswordInput = document.getElementById("registerPassword");
+if (registerPasswordInput) {
+  registerPasswordInput.addEventListener("input", () => {
+    const val = registerPasswordInput.value;
+    if (!val) {
+      if (elements.passwordStrengthMeter) elements.passwordStrengthMeter.hidden = true;
+      return;
+    }
+    if (elements.passwordStrengthMeter) elements.passwordStrengthMeter.hidden = false;
+    const level = calcPasswordStrength(val);
+    renderStrengthMeter(level);
+  });
+}
+
+function calcPasswordStrength(pwd) {
+  let score = 0;
+  if (pwd.length >= 8)  score++;
+  if (pwd.length >= 12) score++;
+  if (/[A-Z]/.test(pwd) && /[a-z]/.test(pwd)) score++;
+  if (/[0-9]/.test(pwd)) score++;
+  if (/[^A-Za-z0-9]/.test(pwd)) score++;
+  // Clamp to 1–4
+  return Math.min(4, Math.max(1, Math.ceil(score * 4 / 5)));
+}
+
+function renderStrengthMeter(level) {
+  const labels = ["", "Fraca", "Razoável", "Boa", "Forte"];
+  const classes = ["", "strength-weak", "strength-fair", "strength-good", "strength-strong"];
+
+  document.querySelectorAll(".strength-segment").forEach((seg) => {
+    const segLevel = Number(seg.dataset.level);
+    seg.className = "strength-segment";
+    if (segLevel <= level) seg.classList.add(classes[level]);
+  });
+
+  if (elements.strengthLabel) {
+    elements.strengthLabel.textContent = labels[level] || "";
+    elements.strengthLabel.className = `strength-label ${classes[level]}`;
+  }
+}
+
+// ─── Login form ───────────────────────────────────────────────────────────────
+
+if (elements.loginForm) {
+  elements.loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearFieldErrors("login");
+    hideBanner("loginFormError");
+
+    const email    = document.getElementById("loginEmail").value.trim();
+    const password = document.getElementById("loginPassword").value;
+
+    let valid = true;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFieldError("loginEmailError", "Informe um e-mail válido.");
+      valid = false;
+    }
+    if (!password) {
+      setFieldError("loginPasswordError", "Informe sua senha.");
+      valid = false;
+    }
+    if (!valid) return;
+
+    setAuthSubmitting("loginSubmitBtn", true);
+
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setAuthenticatedState(data.user);
+        showToast(`Bem-vindo, ${data.user.name}!`);
+      } else {
+        showBanner("loginFormError", data.error || "Falha no login. Verifique suas credenciais.");
+      }
+    } catch {
+      showBanner("loginFormError", "Erro de conexão. Verifique se o servidor está em execução.");
+    } finally {
+      setAuthSubmitting("loginSubmitBtn", false);
+    }
+  });
+}
+
+// ─── Register form ────────────────────────────────────────────────────────────
+
+if (elements.registerForm) {
+  elements.registerForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearFieldErrors("register");
+    hideBanner("registerFormError");
+
+    const name            = document.getElementById("registerName").value.trim();
+    const email           = document.getElementById("registerEmail").value.trim();
+    const password        = document.getElementById("registerPassword").value;
+    const confirmPassword = document.getElementById("registerConfirm").value;
+
+    let valid = true;
+    if (!name || name.length < 2) {
+      setFieldError("registerNameError", "Nome deve ter pelo menos 2 caracteres.");
+      valid = false;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFieldError("registerEmailError", "Informe um e-mail válido.");
+      valid = false;
+    }
+    if (!password || password.length < 8) {
+      setFieldError("registerPasswordError", "Senha deve ter pelo menos 8 caracteres.");
+      valid = false;
+    }
+    if (password !== confirmPassword) {
+      setFieldError("registerConfirmError", "As senhas não coincidem.");
+      valid = false;
+    }
+    if (!valid) return;
+
+    setAuthSubmitting("registerSubmitBtn", true);
+
+    try {
+      const res = await fetch("/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setAuthenticatedState(data.user);
+        showToast(`Conta criada com sucesso! Bem-vindo, ${data.user.name}!`);
+      } else if (data.errors) {
+        Object.entries(data.errors).forEach(([field, msg]) => {
+          const idMap = { name: "registerNameError", email: "registerEmailError", password: "registerPasswordError" };
+          if (idMap[field]) setFieldError(idMap[field], msg);
+        });
+      } else {
+        showBanner("registerFormError", data.error || "Erro ao criar conta. Tente novamente.");
+      }
+    } catch {
+      showBanner("registerFormError", "Erro de conexão. Verifique se o servidor está em execução.");
+    } finally {
+      setAuthSubmitting("registerSubmitBtn", false);
+    }
+  });
+}
+
+// ─── Forgot password form ─────────────────────────────────────────────────────
+
+if (elements.forgotForm) {
+  elements.forgotForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearFieldErrors("forgot");
+    hideBanner("forgotFormError");
+    hideBanner("forgotFormSuccess");
+
+    const email = document.getElementById("forgotEmail").value.trim();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFieldError("forgotEmailError", "Informe um e-mail válido.");
+      return;
+    }
+
+    setAuthSubmitting("forgotSubmitBtn", true);
+
+    try {
+      const res = await fetch("/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        showBanner("forgotFormSuccess", data.message || "Se este e-mail estiver cadastrado, você receberá as instruções em breve.");
+        document.getElementById("forgotEmail").value = "";
+        document.getElementById("forgotSubmitBtn").disabled = true;
+      } else {
+        showBanner("forgotFormError", data.error || "Erro ao processar solicitação. Tente novamente.");
+      }
+    } catch {
+      showBanner("forgotFormError", "Erro de conexão. Verifique se o servidor está em execução.");
+    } finally {
+      setAuthSubmitting("forgotSubmitBtn", false);
+    }
+  });
+}
+
+// ─── Reset password form ──────────────────────────────────────────────────────
+
+if (elements.resetForm) {
+  elements.resetForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearFieldErrors("reset");
+    hideBanner("resetFormError");
+    hideBanner("resetFormSuccess");
+
+    const token           = elements.resetTokenInput ? elements.resetTokenInput.value.trim() : "";
+    const password        = document.getElementById("resetPassword").value;
+    const confirmPassword = document.getElementById("resetConfirm").value;
+
+    let valid = true;
+    if (!token) {
+      showBanner("resetFormError", "Token inválido. Solicite um novo link de recuperação.");
+      valid = false;
+    }
+    if (!password || password.length < 8) {
+      setFieldError("resetPasswordError", "Senha deve ter pelo menos 8 caracteres.");
+      valid = false;
+    }
+    if (password !== confirmPassword) {
+      setFieldError("resetConfirmError", "As senhas não coincidem.");
+      valid = false;
+    }
+    if (!valid) return;
+
+    setAuthSubmitting("resetSubmitBtn", true);
+
+    try {
+      const res = await fetch("/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password, confirmPassword })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        showBanner("resetFormSuccess", data.message || "Senha redefinida com sucesso!");
+        elements.resetForm.hidden = true;
+        if (elements.resetBackLinks) elements.resetBackLinks.hidden = true;
+        if (elements.resetSuccessLinks) elements.resetSuccessLinks.hidden = false;
+      } else {
+        showBanner("resetFormError", data.error || "Erro ao redefinir senha. Solicite um novo link.");
+      }
+    } catch {
+      showBanner("resetFormError", "Erro de conexão. Verifique se o servidor está em execução.");
+    } finally {
+      setAuthSubmitting("resetSubmitBtn", false);
+    }
+  });
+}
+
+// ─── Logout ───────────────────────────────────────────────────────────────────
+
+async function logout() {
+  try {
+    await fetch("/auth/logout", { method: "POST" });
+  } catch {
+    // Session will be invalidated server-side regardless
+  }
+  currentUser = null;
+  if (elements.userSection) elements.userSection.hidden = true;
+  if (elements.mobileLogoutBtn) elements.mobileLogoutBtn.hidden = true;
+  closeMobileMenu();
+  historyCache = [];
+  renderHistory();
+  showAuthCard("login");
+}
+
+if (elements.logoutBtn) {
+  elements.logoutBtn.addEventListener("click", logout);
+}
+if (elements.mobileLogoutBtn) {
+  elements.mobileLogoutBtn.addEventListener("click", logout);
+}
+
+} // end bindAuthEvents
+
+// ─── Auth UI helpers ──────────────────────────────────────────────────────────
+
+function setAuthSubmitting(btnId, isSubmitting) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = isSubmitting;
+  const label   = btn.querySelector(".btn-label");
+  const spinner = btn.querySelector(".btn-spinner");
+  if (label)   label.hidden   = isSubmitting;
+  if (spinner) spinner.hidden = !isSubmitting;
+}
+
+function setFieldError(elementId, message) {
+  const el = document.getElementById(elementId);
+  if (el) {
+    el.textContent = message;
+    el.hidden = false;
+    const input = el.closest(".form-group")?.querySelector(".form-input");
+    if (input) input.classList.add("is-invalid");
+  }
+}
+
+function clearFieldErrors(prefix) {
+  document.querySelectorAll(`[id^="${prefix}"][id$="Error"]`).forEach((el) => {
+    el.textContent = "";
+    el.hidden = false; // keep in DOM so aria-live picks it up; text is empty
+    const input = el.closest(".form-group")?.querySelector(".form-input");
+    if (input) input.classList.remove("is-invalid");
+  });
+}
+
+function showBanner(elementId, message) {
+  const el = document.getElementById(elementId);
+  if (el) {
+    el.textContent = message;
+    el.hidden = false;
+  }
+}
+
+function hideBanner(elementId) {
+  const el = document.getElementById(elementId);
+  if (el) el.hidden = true;
+}
+
+function clearAllAuthBanners() {
+  ["loginFormError", "registerFormError", "forgotFormError", "forgotFormSuccess",
+   "resetFormError", "resetFormSuccess"].forEach(hideBanner);
 }

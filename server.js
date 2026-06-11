@@ -1,6 +1,10 @@
 const express = require("express");
 const path = require("path");
 const Anthropic = require("@anthropic-ai/sdk");
+const session = require("express-session");
+const MySQLStore = require("express-mysql-session")(session);
+const { query: dbQuery, getPool } = require("./db/database");
+const { router: authRouter, requireAuth } = require("./routes/auth");
 require("dotenv").config();
 
 const app = express();
@@ -9,6 +13,8 @@ const ANTHROPIC_MODEL = (process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-lates
 const DEMO_FALLBACK_ENABLED = process.env.DEMO_FALLBACK_ENABLED === "true";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const HISTORY_IMAGE_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 360'%3E%3Crect width='480' height='360' fill='%23edf6e9'/%3E%3Cpath d='M240 95c58 48 87 96 87 145 0 47-35 79-87 79s-87-32-87-79c0-49 29-97 87-145z' fill='%23287a45' opacity='.18'/%3E%3Cpath d='M240 132v150' stroke='%23287a45' stroke-width='12' stroke-linecap='round' opacity='.45'/%3E%3C/svg%3E";
 
 const SUPPORTED_DISEASES = [
   "Folha Saudável",
@@ -160,6 +166,8 @@ const DEMO_FALLBACK_RESPONSE = {
   fallback: true
 };
 
+// ─── Analysis normalization helpers ──────────────────────────────────────────
+
 function resolveSupportedDisease(rawName) {
   if (!rawName) return null;
   const name = String(rawName).trim();
@@ -227,8 +235,105 @@ function normalizeAnalysis(raw) {
   };
 }
 
+// ─── History repository helpers ───────────────────────────────────────────────
+
+function isDbConfigured() {
+  return Boolean(process.env.DB_USER && process.env.DB_NAME);
+}
+
+function parseJsonField(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try { return JSON.parse(value); } catch { return []; }
+}
+
+function rowToEntry(row) {
+  const dt = row.date_time;
+  return {
+    id: row.id,
+    dateTime: dt instanceof Date ? dt.toISOString() : String(dt),
+    predictedClass: row.predicted_class,
+    diseaseDisplayName: row.disease_display_name,
+    confidence: row.confidence,
+    image: row.image || HISTORY_IMAGE_PLACEHOLDER,
+    originalFileName: row.original_file_name || "",
+    description: row.description || "",
+    recommendation: row.recommendation || "",
+    severity: row.severity || "Média",
+    causes: parseJsonField(row.causes),
+    treatment: parseJsonField(row.treatment),
+    prevention: parseJsonField(row.prevention),
+    probabilities: parseJsonField(row.probabilities),
+    fallback: Boolean(row.fallback)
+  };
+}
+
+function validateHistoryEntry(entry) {
+  if (!entry || typeof entry !== "object") return "Entrada inválida.";
+  if (!entry.id || typeof entry.id !== "string" || entry.id.length > 36) return "ID inválido.";
+  if (!entry.dateTime || isNaN(new Date(entry.dateTime).getTime())) return "Data/hora inválida.";
+  if (!entry.predictedClass || typeof entry.predictedClass !== "string" || entry.predictedClass.length > 100) return "predictedClass inválido.";
+  if (!entry.diseaseDisplayName || typeof entry.diseaseDisplayName !== "string" || entry.diseaseDisplayName.length > 100) return "diseaseDisplayName inválido.";
+  const conf = Number(entry.confidence);
+  if (!Number.isFinite(conf) || conf < 0 || conf > 100) return "confidence inválido.";
+  return null;
+}
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
 app.use(express.json({ limit: "20mb" }));
+
+// Session store — uses the same MySQL pool as the rest of the app.
+if (isDbConfigured()) {
+  const sessionStore = new MySQLStore(
+    {
+      clearExpired: true,
+      checkExpirationInterval: 900000,
+      expiration: 7 * 24 * 60 * 60 * 1000,
+      createDatabaseTable: false, // table created by schema.sql
+      schema: {
+        tableName: "sessions",
+        columnNames: { session_id: "session_id", expires: "expires", data: "data" }
+      }
+    },
+    getPool()
+  );
+
+  app.use(
+    session({
+      key: "leafscan.sid",
+      secret: process.env.SESSION_SECRET || "leafscan-dev-secret-CHANGE-IN-PRODUCTION",
+      store: sessionStore,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      }
+    })
+  );
+} else {
+  // Minimal in-memory session so auth routes don't crash when DB is absent.
+  app.use(
+    session({
+      key: "leafscan.sid",
+      secret: process.env.SESSION_SECRET || "leafscan-dev-secret-CHANGE-IN-PRODUCTION",
+      resave: false,
+      saveUninitialized: false,
+      cookie: { httpOnly: true, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 }
+    })
+  );
+}
+
 app.use(express.static(path.join(__dirname)));
+
+// ─── Auth routes ──────────────────────────────────────────────────────────────
+
+app.use("/auth", authRouter);
+
+// ─── Health check ─────────────────────────────────────────────────────────────
 
 app.get("/api/health", (_req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
@@ -236,11 +341,14 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     provider: "anthropic",
     anthropicKeyConfigured: Boolean(apiKey),
-    model: ANTHROPIC_MODEL
+    model: ANTHROPIC_MODEL,
+    dbConfigured: isDbConfigured()
   });
 });
 
-app.post("/api/analyze-image", async (req, res) => {
+// ─── Image analysis ───────────────────────────────────────────────────────────
+
+app.post("/api/analyze-image", requireAuth, async (req, res) => {
   const { imageBase64, mimeType } = req.body;
 
   if (!imageBase64 || !mimeType) {
@@ -286,16 +394,9 @@ app.post("/api/analyze-image", async (req, res) => {
           content: [
             {
               type: "image",
-              source: {
-                type: "base64",
-                media_type: mimeType,
-                data: imageBase64
-              }
+              source: { type: "base64", media_type: mimeType, data: imageBase64 }
             },
-            {
-              type: "text",
-              text: ANALYSIS_PROMPT
-            }
+            { type: "text", text: ANALYSIS_PROMPT }
           ]
         }
       ]
@@ -321,67 +422,231 @@ app.post("/api/analyze-image", async (req, res) => {
 
     if (status === 401) {
       console.error("[LeafScan] Anthropic: chave de API inválida ou sem permissão.");
-      return res.status(401).json({
-        success: false,
-        error: "Chave de API inválida. Verifique ANTHROPIC_API_KEY no arquivo .env."
-      });
+      return res.status(401).json({ success: false, error: "Chave de API inválida. Verifique ANTHROPIC_API_KEY no arquivo .env." });
     }
-
     if (status === 403) {
       console.error("[LeafScan] Anthropic: permissão negada ou problema de faturamento.");
-      if (DEMO_FALLBACK_ENABLED) {
-        console.log("[LeafScan] Modo demonstração ativo: retornando resposta simulada.");
-        return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
-      }
-      return res.status(403).json({
-        success: false,
-        error: "Acesso negado. Verifique as permissões ou o faturamento da sua conta Anthropic."
-      });
+      if (DEMO_FALLBACK_ENABLED) return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
+      return res.status(403).json({ success: false, error: "Acesso negado. Verifique as permissões ou o faturamento da sua conta Anthropic." });
     }
-
     if (status === 429) {
       console.error("[LeafScan] Anthropic: limite de cota ou taxa de requisições excedido.");
-      if (DEMO_FALLBACK_ENABLED) {
-        console.log("[LeafScan] Modo demonstração ativo: retornando resposta simulada.");
-        return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
-      }
-      return res.status(429).json({
-        success: false,
-        error: "Limite de uso da API atingido. Aguarde alguns minutos e tente novamente."
-      });
+      if (DEMO_FALLBACK_ENABLED) return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
+      return res.status(429).json({ success: false, error: "Limite de uso da API atingido. Aguarde alguns minutos e tente novamente." });
     }
-
     if (status === 400) {
       console.error("[LeafScan] Anthropic: requisição inválida —", error.message);
-      return res.status(400).json({
-        success: false,
-        error: "Requisição inválida. Verifique o formato da imagem e tente novamente."
-      });
+      return res.status(400).json({ success: false, error: "Requisição inválida. Verifique o formato da imagem e tente novamente." });
     }
-
     if (status >= 500) {
       console.error("[LeafScan] Anthropic: erro temporário do serviço —", status);
-      if (DEMO_FALLBACK_ENABLED) {
-        console.log("[LeafScan] Modo demonstração ativo: retornando resposta simulada.");
-        return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
-      }
+      if (DEMO_FALLBACK_ENABLED) return res.json({ success: true, analysis: DEMO_FALLBACK_RESPONSE });
     }
 
     console.error("[LeafScan] Erro ao chamar Anthropic Claude:", error.message);
-    return res.status(500).json({
-      success: false,
-      error: "Erro interno do servidor. Verifique o console para mais detalhes."
-    });
+    return res.status(500).json({ success: false, error: "Erro interno do servidor. Verifique o console para mais detalhes." });
   }
 });
+
+// ─── History routes ───────────────────────────────────────────────────────────
+
+app.get("/api/history", requireAuth, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: "Banco de dados não configurado." });
+  }
+  try {
+    const rows = await dbQuery(
+      "SELECT * FROM analyses WHERE user_id = ? ORDER BY date_time DESC",
+      [req.user.id]
+    );
+    res.json({ success: true, history: rows.map(rowToEntry) });
+  } catch (error) {
+    console.error("[LeafScan] Erro ao buscar histórico:", error.message);
+    res.status(503).json({ success: false, error: "Não foi possível acessar o banco de dados." });
+  }
+});
+
+// POST /api/history/migrate — one-time migration from localStorage
+app.post("/api/history/migrate", requireAuth, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: "Banco de dados não configurado." });
+  }
+
+  const { entries } = req.body;
+  if (!Array.isArray(entries)) {
+    return res.status(400).json({ success: false, error: "entries deve ser um array." });
+  }
+
+  let migrated = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") { skipped++; continue; }
+
+    const id = String(entry.id || "").trim();
+    if (!id) { skipped++; continue; }
+
+    const dt = new Date(entry.dateTime);
+    if (isNaN(dt.getTime())) { skipped++; continue; }
+
+    try {
+      await dbQuery(
+        `INSERT IGNORE INTO analyses
+           (id, user_id, date_time, predicted_class, disease_display_name, confidence, image,
+            original_file_name, description, recommendation, severity,
+            causes, treatment, prevention, probabilities, fallback)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          req.user.id,
+          dt,
+          String(entry.predictedClass || "").slice(0, 100) || "Desconhecido",
+          String(entry.diseaseDisplayName || entry.predictedClass || "").slice(0, 100) || "Desconhecido",
+          Math.min(100, Math.max(0, Math.round(Number(entry.confidence) || 0))),
+          entry.image || null,
+          entry.originalFileName || null,
+          entry.description || null,
+          entry.recommendation || null,
+          entry.severity || null,
+          JSON.stringify(Array.isArray(entry.causes) ? entry.causes : []),
+          JSON.stringify(Array.isArray(entry.treatment) ? entry.treatment : []),
+          JSON.stringify(Array.isArray(entry.prevention) ? entry.prevention : []),
+          JSON.stringify(Array.isArray(entry.probabilities) ? entry.probabilities : []),
+          entry.fallback ? 1 : 0
+        ]
+      );
+      migrated++;
+    } catch (error) {
+      console.warn("[LeafScan] Erro ao migrar entrada:", id, error.message);
+      skipped++;
+    }
+  }
+
+  res.json({ success: true, migrated, skipped });
+});
+
+app.post("/api/history", requireAuth, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: "Banco de dados não configurado." });
+  }
+
+  const entry = req.body;
+  const validationError = validateHistoryEntry(entry);
+  if (validationError) {
+    return res.status(400).json({ success: false, error: validationError });
+  }
+
+  try {
+    await dbQuery(
+      `INSERT INTO analyses
+         (id, user_id, date_time, predicted_class, disease_display_name, confidence, image,
+          original_file_name, description, recommendation, severity,
+          causes, treatment, prevention, probabilities, fallback)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        req.user.id,
+        new Date(entry.dateTime),
+        entry.predictedClass,
+        entry.diseaseDisplayName,
+        Math.round(Number(entry.confidence)),
+        entry.image || null,
+        entry.originalFileName || null,
+        entry.description || null,
+        entry.recommendation || null,
+        entry.severity || null,
+        JSON.stringify(Array.isArray(entry.causes) ? entry.causes : []),
+        JSON.stringify(Array.isArray(entry.treatment) ? entry.treatment : []),
+        JSON.stringify(Array.isArray(entry.prevention) ? entry.prevention : []),
+        JSON.stringify(Array.isArray(entry.probabilities) ? entry.probabilities : []),
+        entry.fallback ? 1 : 0
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      entry: {
+        id: entry.id,
+        dateTime: entry.dateTime,
+        predictedClass: entry.predictedClass,
+        diseaseDisplayName: entry.diseaseDisplayName,
+        confidence: entry.confidence,
+        image: entry.image || HISTORY_IMAGE_PLACEHOLDER,
+        originalFileName: entry.originalFileName || "",
+        description: entry.description || "",
+        recommendation: entry.recommendation || "",
+        severity: entry.severity || "Média",
+        causes: Array.isArray(entry.causes) ? entry.causes : [],
+        treatment: Array.isArray(entry.treatment) ? entry.treatment : [],
+        prevention: Array.isArray(entry.prevention) ? entry.prevention : [],
+        probabilities: Array.isArray(entry.probabilities) ? entry.probabilities : [],
+        fallback: entry.fallback || false
+      }
+    });
+  } catch (error) {
+    console.error("[LeafScan] Erro ao salvar análise:", error.message);
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ success: false, error: "Análise já registrada." });
+    }
+    res.status(503).json({ success: false, error: "Não foi possível salvar a análise." });
+  }
+});
+
+app.delete("/api/history", requireAuth, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: "Banco de dados não configurado." });
+  }
+  try {
+    await dbQuery("DELETE FROM analyses WHERE user_id = ?", [req.user.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[LeafScan] Erro ao limpar histórico:", error.message);
+    res.status(503).json({ success: false, error: "Não foi possível limpar o histórico." });
+  }
+});
+
+app.delete("/api/history/:id", requireAuth, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: "Banco de dados não configurado." });
+  }
+
+  const { id } = req.params;
+  if (!id || id.length > 36) {
+    return res.status(400).json({ success: false, error: "ID inválido." });
+  }
+
+  try {
+    // user_id check prevents accessing another user's records
+    const result = await dbQuery(
+      "DELETE FROM analyses WHERE id = ? AND user_id = ?",
+      [id, req.user.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: "Análise não encontrada." });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[LeafScan] Erro ao excluir análise:", error.message);
+    res.status(503).json({ success: false, error: "Não foi possível excluir a análise." });
+  }
+});
+
+// ─── Start server ─────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   console.log(`LeafScan AI rodando em http://localhost:${PORT}`);
   console.log(`Provedor: Anthropic Claude | Modelo: ${ANTHROPIC_MODEL}`);
   console.log(`ANTHROPIC_API_KEY: ${apiKey ? `configurada (${apiKey.length} caracteres)` : "NÃO DEFINIDA"}`);
+  console.log(`Banco de dados: ${isDbConfigured() ? `${process.env.DB_HOST}:${process.env.DB_PORT || 3306}/${process.env.DB_NAME}` : "NÃO CONFIGURADO"}`);
+  if (!process.env.SESSION_SECRET) {
+    console.warn("[Auth] AVISO: SESSION_SECRET não definido. Defina uma chave forte no arquivo .env para produção.");
+  }
   if (!apiKey) {
     console.warn("[LeafScan] AVISO: ANTHROPIC_API_KEY não definida. Crie um arquivo .env antes de analisar imagens.");
+  }
+  if (!isDbConfigured()) {
+    console.warn("[LeafScan] AVISO: banco de dados não configurado. Defina DB_USER e DB_NAME no arquivo .env.");
   }
   if (DEMO_FALLBACK_ENABLED) {
     console.log("[LeafScan] Modo demonstração ativo: respostas simuladas em caso de erro de quota.");
